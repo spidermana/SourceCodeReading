@@ -293,7 +293,10 @@ static s16 interesting_16[] = { INTERESTING_8, INTERESTING_16 };
 static s32 interesting_32[] = { INTERESTING_8, INTERESTING_16, INTERESTING_32 };
 
 /* Fuzzing stages */
-
+// Fuzz的各个阶段：FILP位翻转【bitflip】、算数操作【arithmetic】、特殊内容替换【interest】
+// token字典替换【dictionary】、大破坏:对原文件的多轮变异，每一轮都是将多种方式组合【havoc】
+// 文件拼接【splice】
+// 参考：http://rk700.github.io/2018/01/04/afl-mutations/
 enum {
   /* 00 */ STAGE_FLIP1,
   /* 01 */ STAGE_FLIP2,
@@ -384,7 +387,7 @@ static inline u32 UR(u32 limit) {
 
 
 /* Shuffle an array of pointers. Might be slightly biased. */
-
+// 随机排列一个指针数组【打乱指针数组】
 static void shuffle_ptrs(void** ptrs, u32 cnt) {
 
   u32 i;
@@ -400,9 +403,12 @@ static void shuffle_ptrs(void** ptrs, u32 cnt) {
 
 }
 
+// 环境变量：AFL_NO_AFFINITY会禁止将某个实例绑定某个特点的CPU core上
+// 虽然这也设置会降低运行速度，但是允许运行更多的afl-fuzz实例
 
-#ifdef HAVE_AFFINITY
+#ifdef HAVE_AFFINITY  //应该是允许afl-fuzz实例绑定到特定的CPU core上
 
+//将构建几个进程绑定到特定的CPU核上。
 /* Build a list of processes bound to specific cores. Returns -1 if nothing
    can be found. Assumes an upper bound of 4k CPUs. */
 
@@ -519,9 +525,15 @@ static void bind_to_free_cpu(void) {
 
 #ifndef IGNORE_FINDS
 
-/* Helper function to compare buffers; returns first and last differing offset. We
-   use this to find reasonable locations for splicing two files. */
+/* 
+  Helper function to compare buffers; 
+  returns first and last differing offset. 
+  We use this to find reasonable locations for splicing two files. 
+*/
 
+//比较len长度的字符串ptr1、ptr2，第一个字符不同的idx记录在first上，最后一个不同的记录在last中
+//注意first~last之间不要求都不同。
+//之后是用于splice步骤中找不同的部分拼合文件用的
 static void locate_diffs(u8* ptr1, u8* ptr2, u32 len, s32* first, s32* last) {
 
   s32 f_loc = -1;
@@ -560,6 +572,8 @@ static u8* DI(u64 val) {
 
   cur = (cur + 1) % 12;
 
+// 这个宏是check一下值小于(_divisor) * (_limit_mult)
+// 然后以_divisor作为unit基础输出到tmp中。类型为_cast
 #define CHK_FORMAT(_divisor, _limit_mult, _fmt, _cast) do { \
     if (val < (_divisor) * (_limit_mult)) { \
       sprintf(tmp[cur], _fmt, ((_cast)val) / (_divisor)); \
@@ -784,7 +798,7 @@ static void mark_as_redundant(struct queue_entry* q, u8 state) {
 
 
 /* Append new test case to the queue. */
-
+// 将新的测试用例加入到队列中
 static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
 
   struct queue_entry* q = ck_alloc(sizeof(struct queue_entry));
@@ -842,7 +856,9 @@ EXP_ST void destroy_queue(void) {
 /* Write bitmap to file. The bitmap is useful mostly for the secret
    -B option, to focus a separate fuzzing session on a particular
    interesting input without rediscovering all the others. */
-
+//  gcc options： -B <directory>           Add <directory> to the compiler's search paths.
+// 把bitmap写到文件中
+// 可以将separate fuzzing session专注于某一个特定感兴趣的输入【避免重新发现重复的路径】？
 EXP_ST void write_bitmap(void) {
 
   u8* fname;
@@ -851,11 +867,13 @@ EXP_ST void write_bitmap(void) {
   if (!bitmap_changed) return;
   bitmap_changed = 0;
 
-  fname = alloc_printf("%s/fuzz_bitmap", out_dir);
+  fname = alloc_printf("%s/fuzz_bitmap", out_dir);  //在输出目录中创建fuzz_bitmap文件
   fd = open(fname, O_WRONLY | O_CREAT | O_TRUNC, 0600);
 
   if (fd < 0) PFATAL("Unable to open '%s'", fname);
 
+  // 将fuzzing中未覆盖的部分写入fuzz_bitmap文件中 
+  // virgin_bits[MAP_SIZE],     /* Regions yet untouched by fuzzing
   ck_write(fd, virgin_bits, MAP_SIZE, fname);
 
   close(fd);
@@ -865,7 +883,7 @@ EXP_ST void write_bitmap(void) {
 
 
 /* Read bitmap from file. This is for the -B option again. */
-
+// 读取bitmap存储的文件到virgin_bits中
 EXP_ST void read_bitmap(u8* fname) {
 
   s32 fd = open(fname, O_RDONLY);
@@ -880,13 +898,15 @@ EXP_ST void read_bitmap(u8* fname) {
 
 
 /* Check if the current execution path brings anything new to the table.
-   Update virgin bits to reflect the finds. Returns 1 if the only change is
-   the hit-count for a particular tuple; 2 if there are new tuples seen. 
+   Update virgin bits to reflect the finds. 
+   Returns 1 if the only change is the hit-count for a particular tuple; 
+   2 if there are new tuples seen. 
    Updates the map, so subsequent calls will always return 0.
 
    This function is called after every exec() on a fairly large buffer, so
    it needs to be fast. We do this in 32-bit and 64-bit flavors. */
-
+// 判断现在的执行路径是否有新的覆盖率，并且在virgin_bits中进行更新【维护bitmaps】
+// 这个函数在每次exec()调用后执行，速度一定要快
 static inline u8 has_new_bits(u8* virgin_map) {
 
 #ifdef WORD_SIZE_64
@@ -898,10 +918,15 @@ static inline u8 has_new_bits(u8* virgin_map) {
 
 #else
 
-  u32* current = (u32*)trace_bits;
-  u32* virgin  = (u32*)virgin_map;
-
-  u32  i = (MAP_SIZE >> 2);
+  u32* current = (u32*)trace_bits;  //从当前共享内存SHM中获取的当前次执行路径的bitmap【这里存储的是当前次已访问的bits】
+  u32* virgin  = (u32*)virgin_map;  //历史bitmap情况，这里存储的是未访问no-access的bits【或者是未crash的、或者是未timeout的bitmaps】
+  // bitmaps的size为64KB，就是65536【MAP_SIZE】
+  // 注意为每个块产生随机数标识的是random() % MAPSIZE
+  // 因此共享内存__afl_area_ptr区域记录bitmaps的时候，数组只要开MAPSIZE就好
+  // shared_mem[cur_location ^ prev_location]++; 其中cur_location ^ prev_location <= MAP_SIZE
+  // 注意共享内存的更新是根据orb指令进行的，也就是按照字节更新，bytes++。【最多记录的count数目为256】
+  // 即上述可以理解为 u8 shared_mem[MAP_SIZE]
+  u32  i = (MAP_SIZE >> 2); // MAP_SIZE/4，以4字节为单位来比较。如果4字节中新的路径，才考虑逐个字节比较
 
 #endif /* ^WORD_SIZE_64 */
 
@@ -912,13 +937,16 @@ static inline u8 has_new_bits(u8* virgin_map) {
     /* Optimize for (*current & *virgin) == 0 - i.e., no bits in current bitmap
        that have not been already cleared from the virgin map - since this will
        almost always be the case. */
-
-    if (unlikely(*current) && unlikely(*current & *virgin)) {
-
+    // 首先当前次执行有访问到的路径：*current
+    // 而且，当前访问到的路径中有历史未访问的或者有和历史计数不一致的：*current & *virgin
+    if (unlikely(*current) && unlikely(*current & *virgin)) { //以4字节为单位的比较
+      // 确实有新的bits了，要更新bitmaps
+      // 注意如果4字节单元中没有新的路径，那么会在外层的while循环终遍历下一个4字节单元
+      // 只有4字节中有新的路径了，才会比较小的bytes单元【这样就加快了比较速度】
       if (likely(ret < 2)) {
 
-        u8* cur = (u8*)current;
-        u8* vir = (u8*)virgin;
+        u8* cur = (u8*)current; //现在转换为bytes的比较，按照单个字节来比较
+        u8* vir = (u8*)virgin;  
 
         /* Looks like we have not found any new bytes yet; see if any non-zero
            bytes in current[] are pristine in virgin[]. */
@@ -932,24 +960,30 @@ static inline u8 has_new_bits(u8* virgin_map) {
         else ret = 1;
 
 #else
-
+        //比较4字节大单元中的每一个小单元【bytes】
+        //如果有0xff，即说明本4字节中有新的路径，返回2.
+        //注意bitmaps，如果没有从文件中导入，那么初始化为0xff【256】，即未访问过，否则更新为计数值的取反【剩余的可计数量】
         if ((cur[0] && vir[0] == 0xff) || (cur[1] && vir[1] == 0xff) ||
             (cur[2] && vir[2] == 0xff) || (cur[3] && vir[3] == 0xff)) ret = 2;
-        else ret = 1;
+        else ret = 1; //没有0xff，说明没有新的路径，只有旧的路径次数增加，也就是要更新路径计数
 
 #endif /* ^WORD_SIZE_64 */
 
       }
 
-      *virgin &= ~*current;
+      *virgin &= ~*current; // 更新历史bitmap【减少未访问的bits】，注意virgin是current的取反的值
 
     }
 
-    current++;
+    current++;  //继续比较下一个4字节单元
     virgin++;
 
   }
 
+  // 如果传入的参数是virgin_bits，那么virgin_map和virgin_bits指针是指向同一片空间的
+  // 如果ret不为0，说明bitmap有变化【计数变化或覆盖率变化】
+  // 标记flag，即bitmap_changed为1
+  // 传入的参数还可能是virgin_tmout和virgin_crash，这时候它们产生变化，不更新bitmap_changed
   if (ret && virgin_map == virgin_bits) bitmap_changed = 1;
 
   return ret;
@@ -960,31 +994,44 @@ static inline u8 has_new_bits(u8* virgin_map) {
 /* Count the number of bits set in the provided bitmap. Used for the status
    screen several times every second, does not have to be fast. */
 
+// 计算给定的bitmap【mem参数】的bit数量
 static u32 count_bits(u8* mem) {
 
-  u32* ptr = (u32*)mem;
-  u32  i   = (MAP_SIZE >> 2);
+  u32* ptr = (u32*)mem; //共享内存是以bytes记录的，但是这里用4字节为单位进行计数
+  u32  i   = (MAP_SIZE >> 2); //因此对于整个bitmap，以4字节单位计数，要计算i=(MAP_SIZE >> 2)次。
   u32  ret = 0;
 
   while (i--) {
 
-    u32 v = *(ptr++);
+    u32 v = *(ptr++); //每次记录4字节的bit数量，然后遍历下一个4字节单元。
 
     /* This gets called on the inverse, virgin bitmap; optimize for sparse
        data. */
 
-    if (v == 0xffffffff) {
-      ret += 32;
+    if (v == 0xffffffff) {  //0xffffffff中32个比特数
+      ret += 32;  //直接比特数计数加32，速度加快
       continue;
     }
-
-    v -= ((v >> 1) & 0x55555555);
-    v = (v & 0x33333333) + ((v >> 2) & 0x33333333);
-    ret += (((v + (v >> 4)) & 0xF0F0F0F) * 0x01010101) >> 24;
+    //这一步是按照0x00，一个字节为计数小单元，
+    //将bit转换为计数字节
+    //比如00=>00[0个1]
+    //    01=>01[1个1]
+    //    10=>01[1个1]
+    //    11=>10[2个1，即0x10=2]
+    v -= ((v >> 1) & 0x55555555); //0101 0101 …… 0101 0101
+    //累加相邻的计数单元，eg：“0x1010=0x10+0x10” = 0x0100，“0x0100” = 0x01+0x00 = 0x01
+    //这里就完成了2字节的计数
+    v = (v & 0x33333333) + ((v >> 2) & 0x33333333); //0011 0011 …… 0011 0011
+    //累加4字节的bit计数，但是只有间隔的值是有用的
+    // 0001 0010 0001 0010 0001 0001 0001 0001 => 0001 0011. 0011 0011. 0011 0010. 0010 0010. 【带.的表示相邻4字节的计数情况】
+    // 提取出来计数值& 0x0F0F0F0F，其他清空0000 0011. 0000 0011. 0000 0010. 0000 0010.
+    // 最后把有效计数值累加起来* 0x01010101) >> 24
+    // *0x01010101会累加到24-28bit的位置上。
+    ret += (((v + (v >> 4)) & 0x0F0F0F0F) * 0x01010101) >> 24;
 
   }
 
-  return ret;
+  return ret; //不断累加到ret中，最后返回
 
 }
 
@@ -994,7 +1041,6 @@ static u32 count_bits(u8* mem) {
 /* Count the number of bytes set in the bitmap. Called fairly sporadically,
    mostly to update the status screen or calibrate and examine confirmed
    new paths. */
-
 static u32 count_bytes(u8* mem) {
 
   u32* ptr = (u32*)mem;
