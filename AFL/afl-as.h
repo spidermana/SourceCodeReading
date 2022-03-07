@@ -197,7 +197,7 @@ static const u8* main_payload_32 =
 #else
   "  movl %ecx, %edi\n"         //块覆盖率
 #endif /* ^!COVERAGE_ONLY */
-  "\n"      //%edxz中存储了__afl_area_ptr，以下实现shared_mem[cur_location ^ prev_location]++，即%edx[%edi]++
+  "\n"      //%edx中存储了__afl_area_ptr，以下实现shared_mem[cur_location ^ prev_location]++，即%edx[%edi]++
 #ifdef SKIP_COUNTS    //只设置0或1【有无覆盖】，不计数。
   "  orb  $1, (%edx, %edi, 1)\n"      //(%edx, %edi, 1) = %edx+1*%edi
 #else
