@@ -372,7 +372,7 @@ static const u8* main_payload_32 =
   "  .comm   __afl_temp, 4, 32\n"
   "\n"
   ".AFL_SHM_ENV:\n"
-  "  .asciz \"" SHM_ENV_VAR "\"\n"
+  "  .asciz \"" SHM_ENV_VAR "\"\n"    //共享内存id
   "\n"
   "/* --- END --- */\n"
   "\n";

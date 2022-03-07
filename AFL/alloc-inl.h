@@ -64,7 +64,7 @@
 
 /* Magic tokens used to mark used / freed chunks. */
 
-#define ALLOC_MAGIC_C1  0xFF00FF00 /* Used head (dword)  */
+#define   ALLOC_MAGIC_C1  0xFF00FF00 /* Used head (dword)  */
 #define ALLOC_MAGIC_F   0xFE00FE00 /* Freed head (dword) */
 #define ALLOC_MAGIC_C2  0xF0       /* Used tail (byte)   */
 
@@ -275,8 +275,9 @@ static inline u8* DFL_ck_strdup(u8* str) {
   ret = malloc(size + ALLOC_OFF_TOTAL);
   ALLOC_CHECK_RESULT(ret, size);
 
-  ret += ALLOC_OFF_HEAD;
-
+  ret += ALLOC_OFF_HEAD; //返回的chunk用户区指针加了8字节
+  // AFL对自己的堆块，分配后还加入了标记。【用于次级堆块空间管理】
+  // 自己有个堆块缓存区。
   ALLOC_C1(ret) = ALLOC_MAGIC_C1;
   ALLOC_S(ret)  = size;
   ALLOC_C2(ret) = ALLOC_MAGIC_C2;

@@ -225,7 +225,7 @@
 // #define SIMPLE_FILES
 
 /* List of interesting values to use in fuzzing. */
-
+//TODO: 如何使用这些interesting values.   【Ans：默认的extras,即token】
 #define INTERESTING_8 \
   -128,          /* Overflow signed 8-bit when decremented  */ \
   -1,            /*                                         */ \
@@ -330,7 +330,7 @@
 
 /* Maximum allocator request size (keep well under INT_MAX): */
 
-#define MAX_ALLOC           0x40000000
+#define MAX_ALLOC           0x40000000 //1G
 
 /* A made-up hashing seed: */
 

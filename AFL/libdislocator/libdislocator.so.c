@@ -186,7 +186,7 @@ void* calloc(size_t elem_len, size_t elem_cnt) {
    memory (unlike calloc(), malloc() is not guaranteed to return zeroed
    memory). */
 
-void* malloc(size_t len) {
+void* malloc(size_t len) { //为了确保分别的mem总量不超过1G
 
   void* ret;
 

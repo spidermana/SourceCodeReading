@@ -753,7 +753,7 @@ static void setup_signal_handlers(void) {
 
   /* Exec timeout notifications. */
 
-  sa.sa_handler = handle_timeout;
+  sa.sa_handler = handle_timeout; //在执行testcases的时候，会设置timer，如果超时会触发SIGALRM信号，从而触发这个handler
   sigaction(SIGALRM, &sa, NULL);
 
 }
